@@ -1,0 +1,687 @@
+{
+  "name": "Dental Lead Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -112,
+        0
+      ],
+      "id": "33e041d7-0d52-45ef-a432-08458e06ed9b",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot8836030470:AAFtTMWq6qFK-pKCb9H5fkELDT2-qlm64k4/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $getWorkflowStaticData('global').lastUpdateId || 0 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        64,
+        0
+      ],
+      "id": "19495892-c774-42b8-bfec-349faf68e25d",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nif (!response.ok || !response.result || response.result.length === 0) {\n  return [];\n}\n\nconst lastProcessed = staticData.lastUpdateId || 0;\nconst newUpdates = response.result.filter(u => u.update_id > lastProcessed);\n\nif (newUpdates.length === 0) {\n  return [];\n}\n\nconst lastUpdate = newUpdates[newUpdates.length - 1];\nstaticData.lastUpdateId = lastUpdate.update_id;\n\nconst msg = lastUpdate.message;\nif (!msg || !msg.text) {\n  return [];\n}\n\n// ⚠️ СНАЧАЛА /start — возвращаем isStart: true\nif (msg.text === '/start') {\n  return [{\n    json: {\n      text: '/start',\n      chatId: msg.chat.id,\n      firstName: msg.from.first_name || 'Пациент',\n      userId: msg.from.id,\n      messageId: msg.message_id,\n      isStart: true\n    }\n  }];\n}\n\n// ⚠️ ПОТОМ остальные команды\nif (msg.text.startsWith('/')) {\n  return [];\n}\n\n// Обычные сообщения\nreturn [{\n  json: {\n    text: msg.text,\n    chatId: msg.chat.id,\n    firstName: msg.from.first_name || 'Пациент',\n    userId: msg.from.id,\n    messageId: msg.message_id,\n    isStart: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "0bf19622-248b-48ac-8ea9-4e205911d230",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "options": {
+          "systemMessage": "=Ты — виртуальный ассистент стоматологической клиники \"Дентал Демо\".\nТвоя задача — вежливо пообщаться с пациентом, выяснить его потребность \nи собрать контактные данные для администратора.\n\n=== ВАЖНО ПРО ПРИВЕТСТВИЕ ===\n\nПоздоровайся ТОЛЬКО ОДИН РАЗ — в самом первом ответе.\nЕсли в истории диалога уже есть твоё приветствие — НЕ здоровайся снова.\nСразу переходи к сути: отвечай на вопрос пациента или задавай следующий вопрос.\nПовторное \"Здравствуйте!\" в каждом сообщении — это ОШИБКА.\n\n=== БАЗА ЗНАНИЙ ===\n\nАдрес: г. Минск, ул. Примерная, 10\nТелефон: +375 (29) 123-45-67\nГрафик: Пн–Пт 9:00–20:00, Сб 10:00–16:00, Вс — выходной\n\nУСЛУГИ И ЦЕНЫ (от):\n- Консультация — 30 BYN\n- Профессиональная чистка — от 80 BYN\n- Лечение кариеса — от 100 BYN\n- Имплантация — от 1500 BYN\n- Брекеты — от 2000 BYN\n- Удаление зуба — от 60 BYN\n\n=== ПРАВИЛА ОБЩЕНИЯ ===\n\n1. Тон: дружелюбный, профессиональный, короткие сообщения (2-3 предложения).\n2. Не давай медицинских советов и не ставь диагнозы.\n3. Точную цену называет врач после осмотра. Ты можешь назвать только \"от X BYN\".\n4. Если пациент просит человека, жалуется, просит вернуть деньги — \n   сразу передай администратору (action: escalate).\n5. Не выдумывай информацию, которой нет в базе знаний. Если не знаешь — \n   скажи \"уточню у администратора\" (action: escalate).\n6. Отвечай на русском языке.\n\n=== ЧТО НУЖНО СОБРАТЬ ===\n\n1. Услуга (что беспокоит / что хочет сделать)\n2. Срочность (\"болит сейчас\" = горячий, \"хочу записаться\" = тёплый, \n   \"просто спрашиваю\" = холодный)\n3. Был ли раньше в клинике\n4. Имя\n5. Телефон\n\n=== СТАТУСЫ ЛИДА ===\n\n- горячий: острая боль, срочно, травма\n- тёплый: хочет записаться, плановое лечение\n- холодный: просто узнаёт цены/график, не готов записываться\n\n=== ФОРМАТ ОТВЕТА (СТРОГО JSON) ===\n\nТы ВСЕГДА отвечаешь ТОЛЬКО в формате JSON, без пояснений и markdown.\n\nФормат:\n{\n  \"action\": \"reply\" | \"save_lead\" | \"escalate\",\n  \"message\": \"текст для пациента\",\n  \"lead_data\": {\n    \"name\": null,\n    \"phone\": null,\n    \"service\": null,\n    \"urgency\": null,\n    \"status\": null,\n    \"summary\": null\n  }\n}\n\nПРАВИЛА ФОРМАТА:\n- Первый символ ответа — \"{\". Последний — \"}\".\n- Никаких ```json, никаких пояснений, никаких \"is not proper JSON\".\n- Если данных ещё не хватает — action: \"reply\", в message — следующий вопрос.\n- Заполняй только те поля lead_data, которые уже известны.\n- Когда все 5 пунктов собраны — action: \"save_lead\" и заполни все поля.\n- summary — краткое резюме диалога (1-2 предложения).\n- Телефон нормализуй в формат +375XXXXXXXXX.\n\n=== ПРИМЕРЫ ===\n\nПациент (первое сообщение): \"болит зуб\"\nОтвет: {\"action\": \"reply\", \"message\": \"Здравствуйте! Понимаю, это неприятно. Какая услуга вас интересует — лечение, чистка, консультация? И как вас зовут?\", \"lead_data\": {\"name\": null, \"phone\": null, \"service\": \"лечение\", \"urgency\": \"болит сейчас\", \"status\": \"горячий\", \"summary\": null}}\n\nПациент (второе сообщение): \"Егор\"\nОтвет: {\"action\": \"reply\", \"message\": \"Приятно познакомиться, Егор! Оставьте, пожалуйста, номер телефона — администратор свяжется с вами.\", \"lead_data\": {\"name\": \"Егор\", \"phone\": null, \"service\": \"лечение\", \"urgency\": \"болит сейчас\", \"status\": \"горячий\", \"summary\": null}}\n\nПациент (третье): \"+375291234567\"\nОтвет: {\"action\": \"reply\", \"message\": \"Спасибо! Вы раньше были у нас в клинике?\", \"lead_data\": {\"name\": \"Егор\", \"phone\": \"+375291234567\", \"service\": \"лечение\", \"urgency\": \"болит сейчас\", \"status\": \"горячий\", \"summary\": null}}\n\nПациент (четвёртое): \"нет, первый раз\"\nОтвет: {\"action\": \"save_lead\", \"message\": \"Отлично, записал! Администратор свяжется с вами в течение 15 минут.\", \"lead_data\": {\"name\": \"Егор\", \"phone\": \"+375291234567\", \"service\": \"лечение кариеса\", \"urgency\": \"болит сейчас\", \"status\": \"горячий\", \"summary\": \"Острая боль, хочет записаться, впервые\"}}\n\nПациент: \"Сколько стоит имплантация?\"\nОтвет: {\"action\": \"reply\", \"message\": \"Имплантация у нас от 1500 BYN. Точную стоимость назовёт врач после осмотра. Хотите записаться на консультацию?\", \"lead_data\": {\"name\": null, \"phone\": null, \"service\": \"имплантация\", \"urgency\": \"плановое\", \"status\": \"тёплый\", \"summary\": null}}\n\nПациент: \"Хочу поговорить с человеком\"\nОтвет: {\"action\": \"escalate\", \"message\": \"Конечно, сейчас передам администратору. Он свяжется с вами в ближайшее время.\", \"lead_data\": {\"name\": null, \"phone\": null, \"service\": null, \"urgency\": null, \"status\": \"горячий\", \"summary\": \"Просит связаться с администратором\"}}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        608,
+        0
+      ],
+      "id": "6b6b6997-8fb3-4ea9-ae45-788b1cfe8fba",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "aion-2.0",
+          "mode": "list",
+          "cachedResultName": "aion-2.0"
+        },
+        "responsesApiEnabled": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        608,
+        160
+      ],
+      "id": "188f1581-5292-480f-9001-c8cd3b42ee36",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "bHMTUrU8Y14YMXx7",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiOutput = $input.first().json.output;\n\nconst firstBrace = aiOutput.indexOf('{');\nconst lastBrace = aiOutput.lastIndexOf('}');\n\nif (firstBrace === -1 || lastBrace === -1) {\n  return [{ json: { action: 'error', message: 'JSON не найден', raw: aiOutput } }];\n}\n\nconst jsonString = aiOutput.substring(firstBrace, lastBrace + 1);\n\nlet parsed;\ntry {\n  parsed = JSON.parse(jsonString);\n} catch (e) {\n  return [{ json: { action: 'error', message: 'Ошибка парсинга', raw: aiOutput } }];\n}\n\nconst originalCode = $('Code in JavaScript').first().json;\n\nreturn [{\n  json: {\n    action: parsed.action,\n    message: parsed.message,\n    lead_data: parsed.lead_data || {},\n    chatId: originalCode.chatId,\n    firstName: originalCode.firstName,\n    userId: originalCode.userId,\n    originalText: originalCode.text\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        0
+      ],
+      "id": "7ac6b3a3-d0f3-4f07-8971-b595682623c9",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1296,
+        -128
+      ],
+      "id": "efe97061-47ad-463d-bd70-01679a6a95a1",
+      "name": "Send a text message",
+      "webhookId": "71e84327-d1f8-4e95-b941-cd4f5c7ac151",
+      "credentials": {
+        "telegramApi": {
+          "id": "gEEfs9Dh4CAL9c47",
+          "name": "dental"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1Co6vcaT6-c3aDPkOQfJHnj_ASJfnnWw5BRmNBmXEhCQ/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.toISO() }}",
+            "Name": "={{ $json.lead_data.name }}",
+            "Phone": "={{ $json.lead_data.phone }}",
+            "Service": "={{ $json.lead_data.service }}",
+            "Urgency": "={{ $json.lead_data.urgency }}",
+            "Status": "={{ $json.lead_data.status }}",
+            "Summary": "={{ $json.lead_data.summary }}",
+            "Source": "Telegram"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Service",
+              "displayName": "Service",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Urgency",
+              "displayName": "Urgency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1296,
+        0
+      ],
+      "id": "fa708a6a-0a70-4bed-a531-f43e3d2bcf52",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Ru1NrHenUkq1LHau",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "-1004377489334",
+        "text": "=🔔 НОВЫЙ ЛИД\n\nИмя: {{ $('Code in JavaScript1').item.json.lead_data.name }}\nТелефон: {{ $('Code in JavaScript1').item.json.lead_data.phone }}\nУслуга: {{ $('Code in JavaScript1').item.json.lead_data.service }}\nСрочность: {{ $('Code in JavaScript1').item.json.lead_data.urgency }}\nСтатус: {{ $('Code in JavaScript1').item.json.lead_data.status }}\n\nРезюме: {{ $('Code in JavaScript1').item.json.lead_data.summary }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1472,
+        0
+      ],
+      "id": "c1f9cd95-d8cd-4226-abb6-0c53892df37a",
+      "name": "Send a text message1",
+      "webhookId": "6fbaeb1e-0f75-449a-abf5-c0007edc0241",
+      "credentials": {
+        "telegramApi": {
+          "id": "gEEfs9Dh4CAL9c47",
+          "name": "dental"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "-1004377489334",
+        "text": "=⚠️ ТРЕБУЕТСЯ ВНИМАНИЕ  Пациент: {{ $('Code in JavaScript1').item.json.firstName }} (ID: {{ $('Code in JavaScript1').item.json.userId }})  Сообщение: {{ $('Code in JavaScript1').item.json.originalText }}  Ответ AI: {{ $('Code in JavaScript1').item.json.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1296,
+        144
+      ],
+      "id": "33e8b961-f4f5-4521-8440-1d4e7996b3ef",
+      "name": "Send a text message2",
+      "webhookId": "fd640e26-28f7-4b20-80e4-12f696f4fef2",
+      "credentials": {
+        "telegramApi": {
+          "id": "gEEfs9Dh4CAL9c47",
+          "name": "dental"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Code in JavaScript1').item.json.chatId }}",
+        "text": "={{ $('Code in JavaScript1').item.json.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1648,
+        0
+      ],
+      "id": "2840289a-d02e-4f84-a4cb-cfe616d386e8",
+      "name": "Send a text message3",
+      "webhookId": "c4edc95f-65e5-471b-944d-0d4268519b4d",
+      "credentials": {
+        "telegramApi": {
+          "id": "gEEfs9Dh4CAL9c47",
+          "name": "dental"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Code in JavaScript').item.json.chatId }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        704,
+        256
+      ],
+      "id": "657c02ad-73da-4d18-a536-2c91e42aa8b8",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "reply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "52752e86-d08f-4527-875a-c4196d5b5c72"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reply"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9cba3309-fa37-448c-9dae-105eb8832746",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "save_lead",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "save_lead"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "0f83c01d-da3d-44a3-b220-8bc55ffa47f2",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "escalate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "escalate"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": false
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1088,
+        -16
+      ],
+      "id": "6142f166-23bb-4695-ae84-f05b5132c0b4",
+      "name": "Switch action"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.isStart }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "id": "5607e82f-dddc-4320-857e-810b0d51b4eb"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "start"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "8e462e2e-cf66-4f00-a190-a5f4e9a94b10",
+                    "leftValue": "={{ $json.isStart }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "not_start"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        0
+      ],
+      "id": "52143a49-6004-49e2-97c2-5fa0b5c4a2ef",
+      "name": "Switch start"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Здравствуйте! 👋  Я виртуальный ассистент клиники \"Дентал Демо\".  Помогу вам: • записаться на приём • узнать цены на услуги • ответить на частые вопросы  Чтобы начать — напишите, что вас беспокоит.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        624,
+        -144
+      ],
+      "id": "87fbf162-4d85-42b8-8406-821228ca2046",
+      "name": "Send a text message4",
+      "webhookId": "90de22cf-5c4c-4ab5-b927-8cf11045653d",
+      "credentials": {
+        "telegramApi": {
+          "id": "gEEfs9Dh4CAL9c47",
+          "name": "dental"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Switch action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message1": {
+      "main": [
+        [
+          {
+            "node": "Send a text message3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch action": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch start": {
+      "main": [
+        [
+          {
+            "node": "Send a text message4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "060274f8-49fe-42fd-b983-a3b1bdf57f21",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8cb8d0ac5a67b7b32529766bc57ed2334bcec7b94383b7d2b00af4a82ff63525"
+  },
+  "nodeGroups": [],
+  "id": "QgDwjYyyCbIAmIYH",
+  "tags": []
+}
